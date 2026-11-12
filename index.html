@@ -30652,10 +30652,9 @@ const Radio = (function(){
   if(!isFinite(volume)) volume = 0.7;
 
   let player = null, playerReady = false, currentIdx = -1, isPlaying = false;
-  let pendingPlayIdx = null;   // wacht op speler-ready
+  let pendingPlayIdx = null;
   let modal = null, miniPlayer = null;
   let uiRefs = null, miniRefs = null;
-  let playerHostId = 'radioPersistentHost';
 
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tracks)); } catch {} };
 
@@ -30670,21 +30669,34 @@ const Radio = (function(){
     return null;
   }
 
-  /* ── Speler INITIEEL aanmaken (direct bij laden) ── */
-  function initPlayer(){
-    const host = ensurePersistentHost();
-    if(!document.getElementById('radioPersistentPlayer')){
+  /* ── 1. Create a PERMANENT hidden host for the iframe ── */
+  function ensurePersistentHost(){
+    let host = document.getElementById('radioPersistentHost');
+    if(!host){
+      host = document.createElement('div');
+      host.id = 'radioPersistentHost';
+      // It starts hidden in the bottom right corner (mini-player size)
+      host.style.cssText = 'position:fixed;bottom:80px;right:14px;width:280px;height:50px;' +
+        'opacity:0.01;pointer-events:none;z-index:2147483400;overflow:hidden;' +
+        'transition:all 0.3s ease;background:#000;border-radius:12px;';
+      document.body.appendChild(host);
+      
       const inner = document.createElement('div');
-      inner.id = 'radioPersistentPlayer';
-      inner.style.cssText = 'width:100%;height:100%;';
-      host.innerHTML = '';
+      inner.id = 'radioPlayerHost'; // YouTube API replaces this
+      inner.style.width = '100%';
+      inner.style.height = '100%';
       host.appendChild(inner);
-      playerHostId = 'radioPersistentPlayer';
     }
+    return host;
+  }
+
+  /* ── 2. Init the player once ── */
+  function initPlayer(){
+    ensurePersistentHost();
     return loadYouTubeAPI().then(YT => {
       if(!YT) throw new Error('YouTube API niet geladen');
-      return new Promise((resolve, reject) => {
-        player = new YT.Player(playerHostId, {
+      return new Promise(resolve => {
+        player = new YT.Player('radioPlayerHost', {
           height: '100%', width: '100%',
           playerVars: { playsinline: 1, modestbranding: 1, rel: 0 },
           events: {
@@ -30714,23 +30726,6 @@ const Radio = (function(){
     });
   }
 
-  /* ── Iframe verplaatsen tussen host en modal ── */
-  function ensurePlayerIn(container){
-    if(!player || !playerReady || !container) return;
-    try {
-      const iframe = player.getIframe?.();
-      if(iframe && iframe.parentNode !== container){
-        container.appendChild(iframe);
-      }
-    } catch(e){ console.warn('ensurePlayerIn:', e); }
-  }
-
-  function sendPlayerHome(){
-    const host = document.getElementById('radioPersistentPlayer');
-    if(host) ensurePlayerIn(host);
-  }
-
-  /* ── Play (wacht op speler-ready) ── */
   function doPlay(idx){
     if(!playerReady || !tracks[idx]) return;
     currentIdx = idx;
@@ -30744,26 +30739,15 @@ const Radio = (function(){
     if(!playerReady){
       pendingPlayIdx = idx;
       toast('⏳ Speler laden…', '#f0b24a', 2000);
-      // Zorg dat de init gestart is
       if(!player) initPlayer();
       return;
     }
     doPlay(idx);
   }
 
-  function next(){
-    if(!tracks.length) return;
-    play(currentIdx < 0 ? 0 : (currentIdx + 1) % tracks.length);
-  }
-  function prev(){
-    if(!tracks.length) return;
-    play(currentIdx <= 0 ? tracks.length - 1 : currentIdx - 1);
-  }
-  function toggle(){
-    if(!playerReady) return;
-    if(isPlaying) player.pauseVideo();
-    else player.playVideo();
-  }
+  function next(){ if(tracks.length) play(currentIdx < 0 ? 0 : (currentIdx + 1) % tracks.length); }
+  function prev(){ if(tracks.length) play(currentIdx <= 0 ? tracks.length - 1 : currentIdx - 1); }
+  function toggle(){ if(playerReady) isPlaying ? player.pauseVideo() : player.playVideo(); }
   function setVolume(v){
     volume = Math.max(0, Math.min(1, v));
     if(playerReady) player.setVolume(Math.round(volume * 100));
@@ -30826,28 +30810,38 @@ const Radio = (function(){
     if(playBtn) playBtn.textContent = isPlaying ? '⏸' : '▶';
   }
 
+  /* ── 3. Mini Player (custom HTML widget) ── */
   function showMiniPlayer(){
     if(miniPlayer) return;
+    
+    // Make sure the iframe host is in the mini position and clickable if needed
+    const host = ensurePersistentHost();
+    host.style.cssText = 'position:fixed;bottom:80px;right:14px;width:280px;height:50px;' +
+      'opacity:0.01;pointer-events:none;z-index:2147483400;overflow:hidden;' +
+      'transition:all 0.3s ease;background:#000;border-radius:12px;';
+
     miniPlayer = document.createElement('div');
     miniPlayer.id = 'radioMiniPlayer';
-    miniPlayer.style.cssText = 'position:fixed;bottom:80px;right:14px;z-index:2147483400;' +
+    // Make it look exactly like the host, but with buttons on top
+    miniPlayer.style.cssText = 'position:fixed;bottom:80px;right:14px;z-index:2147483401;' +
       'background:linear-gradient(135deg,#152234,#0a111a);border:1px solid #243449;' +
-      'border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;' +
+      'border-radius:12px;padding:8px 12px;display:flex;align-items:center;gap:10px;' +
       'font-family:system-ui;color:#e7edf5;box-shadow:0 8px 32px rgba(0,0,0,0.6);' +
-      'min-width:280px;max-width:340px;backdrop-filter:blur(10px);user-select:none;';
+      'width:280px;height:50px;backdrop-filter:blur(10px);user-select:none;box-sizing:border-box;';
+    
     miniPlayer.innerHTML = `
-      <div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#f0b24a,#b07020);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;animation:radioMiniPulse 2s ease-in-out infinite;cursor:grab;">🎵</div>
-      <div style="flex:1;min-width:0;pointer-events:none;">
-        <div id="radioMiniTitle" style="font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e7edf5;">Geen nummer</div>
-        <div style="font-size:10px;color:#8a9bb0;margin-top:1px;">🎵 Timothy Radio</div>
+      <div style="width:32px;height:32px;border-radius:6px;background:linear-gradient(135deg,#f0b24a,#b07020);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;animation:radioMiniPulse 2s ease-in-out infinite;cursor:pointer;" title="Vergroot">🎵</div>
+      <div style="flex:1;min-width:0;pointer-events:none;cursor:pointer;" title="Vergroot">
+        <div id="radioMiniTitle" style="font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e7edf5;">Geen nummer</div>
+        <div style="font-size:9px;color:#8a9bb0;margin-top:1px;">🎵 Timothy Radio</div>
       </div>
       <div style="display:flex;gap:2px;flex-shrink:0;">
-        <button data-radio-mini="prev" title="Vorige" style="background:none;border:none;color:#c8d8e8;font-size:14px;cursor:pointer;padding:4px 6px;">⏮</button>
-        <button id="radioMiniPlay" data-radio-mini="play" title="Play/Pause" style="background:rgba(240,178,74,0.2);border:none;color:#f0b24a;font-size:14px;cursor:pointer;padding:4px 8px;border-radius:6px;font-weight:700;">▶</button>
-        <button data-radio-mini="next" title="Volgende" style="background:none;border:none;color:#c8d8e8;font-size:14px;cursor:pointer;padding:4px 6px;">⏭</button>
-        <button data-radio-mini="expand" title="Vergroot" style="background:none;border:none;color:#5fd39a;font-size:14px;cursor:pointer;padding:4px 6px;">⤢</button>
-        <button data-radio-mini="close" title="Stop & sluit" style="background:none;border:none;color:#e74c3c;font-size:14px;cursor:pointer;padding:4px 6px;">×</button>
+        <button data-radio-mini="prev" title="Vorige" style="background:none;border:none;color:#c8d8e8;font-size:12px;cursor:pointer;padding:4px;">⏮</button>
+        <button id="radioMiniPlay" data-radio-mini="play" title="Play/Pause" style="background:rgba(240,178,74,0.2);border:none;color:#f0b24a;font-size:12px;cursor:pointer;padding:4px 6px;border-radius:4px;font-weight:700;">▶</button>
+        <button data-radio-mini="next" title="Volgende" style="background:none;border:none;color:#c8d8e8;font-size:12px;cursor:pointer;padding:4px;">⏭</button>
+        <button data-radio-mini="close" title="Stop & sluit" style="background:none;border:none;color:#e74c3c;font-size:14px;cursor:pointer;padding:4px;">×</button>
       </div>`;
+    
     document.body.appendChild(miniPlayer);
     miniRefs = {
       titleEl: miniPlayer.querySelector('#radioMiniTitle'),
@@ -30860,19 +30854,24 @@ const Radio = (function(){
         if(act === 'prev') prev();
         else if(act === 'next') next();
         else if(act === 'play') toggle();
-        else if(act === 'expand') openModal();
         else if(act === 'close') stopAndClose();
       };
     });
 
-    // Drag support
+    // Make the whole widget draggable
     let isDragging = false, offX = 0, offY = 0;
     const onMove = e => {
-      if(!isDragging || !miniPlayer) return;
+      if(!isDragging) return;
       miniPlayer.style.right = 'auto';
       miniPlayer.style.bottom = 'auto';
       miniPlayer.style.left = (e.clientX - offX) + 'px';
       miniPlayer.style.top  = (e.clientY - offY) + 'px';
+      
+      // Keep the hidden iframe exactly under the custom mini-player
+      const r = miniPlayer.getBoundingClientRect();
+      const host = ensurePersistentHost();
+      host.style.right = 'auto'; host.style.bottom = 'auto';
+      host.style.left = r.left + 'px'; host.style.top = r.top + 'px';
     };
     const onUp = () => {
       isDragging = false;
@@ -30889,6 +30888,10 @@ const Radio = (function(){
       document.addEventListener('pointerup', onUp);
     });
 
+    // Clicking the text or icon opens the big modal
+    miniPlayer.querySelector('.flex-1').onclick = openModal;
+    miniPlayer.querySelector('.rounded-6').onclick = openModal;
+
     updateMiniUI();
   }
 
@@ -30904,13 +30907,22 @@ const Radio = (function(){
     updateModalUI();
   }
 
+  /* ── 4. Modals ── */
   function closeModal(){
     if(!modal) return;
-    // Iframe terug naar persistent host
-    sendPlayerHome();
+    
+    // Shrink iframe host to mini-player position
+    const host = ensurePersistentHost();
+    host.style.top = 'auto'; host.style.left = 'auto';
+    host.style.bottom = '80px'; host.style.right = '14px';
+    host.style.width = '280px'; host.style.height = '50px';
+    host.style.opacity = '0.01';
+    host.style.pointerEvents = 'none';
+
     modal.remove();
     modal = null;
     uiRefs = null;
+
     if(isPlaying || currentIdx >= 0) showMiniPlayer();
     else hideMiniPlayer();
   }
@@ -30924,19 +30936,19 @@ const Radio = (function(){
     m.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:rgba(5,8,12,0.94);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:20px;font-family:system-ui;color:#e7edf5;overflow-y:auto;';
     m.innerHTML = `
       <div style="background:#152234;border:1px solid #243449;border-radius:16px;max-width:720px;width:100%;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,0.8);overflow:hidden;">
-        <div style="padding:16px 22px;border-bottom:1px solid #243449;display:flex;align-items:center;gap:12px;background:linear-gradient(135deg,#1a2a3f,#152234);">
+        <div style="padding:16px 22px;border-bottom:1px solid #243449;display:flex;align-items:center;gap:12px;background:linear-gradient(135deg,#1a2a3f,#152234);flex-shrink:0;">
           <span style="font-size:24px;">📻</span>
           <h2 style="margin:0;font-size:18px;font-weight:700;flex:1;">Timothy Radio</h2>
           <button id="radioClose" title="Sluit (muziek blijft doorspelen)" style="background:none;border:none;color:#8a9bb0;font-size:26px;cursor:pointer;line-height:1;padding:0 4px;">×</button>
         </div>
+        
+        <!-- FIXED VIDEO AREA -->
+        <div id="radioVideoSlot" style="background:#000;position:relative;padding-bottom:56.25%;height:0;flex-shrink:0;">
+           <!-- The iframe gets moved visually over this slot -->
+        </div>
+
         <div style="padding:20px;overflow-y:auto;flex:1;">
-          <div style="background:#000;border-radius:12px;overflow:hidden;margin-bottom:16px;position:relative;padding-bottom:56.25%;height:0;">
-            <div id="radioPlayerHost" style="position:absolute;inset:0;"></div>
-            <div id="radioPlaceholder" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#555;background:#0a0f18;pointer-events:none;">
-              <div style="font-size:56px;margin-bottom:8px;">🎵</div>
-              <div style="font-size:13px;">Voeg een YouTube-link toe om te starten</div>
-            </div>
-          </div>
+          
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
             <button id="radioPrev" style="background:rgba(255,255,255,0.08);border:none;color:#fff;width:40px;height:40px;border-radius:50%;cursor:pointer;font-size:16px;">⏮</button>
             <button id="radioPlay" style="background:#f0b24a;border:none;color:#1b1405;width:52px;height:52px;border-radius:50%;cursor:pointer;font-size:20px;font-weight:700;">▶</button>
@@ -30945,6 +30957,7 @@ const Radio = (function(){
             <span style="font-size:14px;">🔊</span>
             <input type="range" id="radioVol" min="0" max="100" value="${Math.round(volume*100)}" style="width:90px;accent-color:#f0b24a;">
           </div>
+          
           <div style="margin-bottom:16px;">
             <div style="font-size:12px;font-weight:700;color:#f0b24a;letter-spacing:1.5px;margin-bottom:8px;">➕ NUMMER TOEVOEGEN</div>
             <div style="display:flex;gap:8px;">
@@ -30967,9 +30980,6 @@ const Radio = (function(){
               ${[15,25,45,60].map(n => `<button class="radio-focus-btn" data-min="${n}" style="flex:1;min-width:70px;background:rgba(95,211,154,0.12);border:1px solid rgba(95,211,154,0.35);color:#5fd39a;border-radius:8px;padding:10px;font:inherit;font-weight:700;cursor:pointer;font-size:13px;">${n} min</button>`).join('')}
             </div>
             <div id="radioFocusStatus" style="display:none;margin-top:10px;text-align:center;font-size:12px;color:#5fd39a;background:rgba(95,211,154,0.12);border-radius:8px;padding:8px;">🎯 Focus Mode actief</div>
-          </div>
-          <div style="margin-top:14px;padding:10px 14px;background:rgba(95,211,154,0.08);border-left:3px solid #5fd39a;border-radius:6px;font-size:11px;color:#9fb0c4;line-height:1.5;">
-            💡 <b style="color:#5fd39a;">Blijft doorspelen</b> als je dit venster sluit. Rechtsonder verschijnt een mini-player.
           </div>
         </div>
       </div>`;
@@ -31005,7 +31015,6 @@ const Radio = (function(){
     m.querySelectorAll('.radio-focus-btn').forEach(b => {
       b.onclick = () => startFocus(parseInt(b.dataset.min));
     });
-
     m.querySelector('#radioExport').onclick = exportPlaylist;
     m.querySelector('#radioImport').onclick = () => m.querySelector('#radioImportFile').click();
     m.querySelector('#radioImportFile').onchange = async e => {
@@ -31015,33 +31024,42 @@ const Radio = (function(){
         const added = await importPlaylist(file);
         updateAllUI();
         toast(`✅ ${added} nummer${added === 1 ? '' : 's'} geïmporteerd`, '#5fd39a');
-      } catch(err){
-        toast('❌ Import mislukt: ' + err.message, '#e74c3c');
-      }
+      } catch(err){ toast('❌ Import mislukt: ' + err.message, '#e74c3c'); }
       e.target.value = '';
     };
 
-    // Zorg dat speler klaar is en verplaats iframe naar modal
-    if(!player || !playerReady){
-      initPlayer().then(() => {
-        ensurePlayerIn(m.querySelector('#radioPlayerHost'));
-        hidePlaceholderIfNeeded();
-        updateAllUI();
-      }).catch(err => {
-        toast('❌ YouTube speler kon niet laden: ' + err.message, '#e74c3c', 6000);
-      });
-    } else {
-      ensurePlayerIn(m.querySelector('#radioPlayerHost'));
-      hidePlaceholderIfNeeded();
-      updateAllUI();
-    }
-  }
+    // ── CRITICAL FIX: Move the PERMANENT iframe host over the video slot ──
+    const slot = m.querySelector('#radioVideoSlot');
+    const rect = slot.getBoundingClientRect();
+    const host = ensurePersistentHost();
+    
+    // Position the host exactly over the modal's video area
+    host.style.top = rect.top + 'px';
+    host.style.left = rect.left + 'px';
+    host.style.width = rect.width + 'px';
+    host.style.height = rect.height + 'px';
+    host.style.opacity = '1';
+    host.style.pointerEvents = 'auto';
+    host.style.bottom = 'auto';
+    host.style.right = 'auto';
 
-  function hidePlaceholderIfNeeded(){
-    const ph = $('#radioPlaceholder');
-    if(!ph) return;
-    if(playerReady && (currentIdx >= 0 || tracks.length)) ph.style.display = 'none';
-    else ph.style.display = 'flex';
+    // (Optional) recalculate on window resize so it stays perfectly centered
+    const onResize = () => {
+      if(!modal) return;
+      const r = slot.getBoundingClientRect();
+      host.style.top = r.top + 'px';
+      host.style.left = r.left + 'px';
+      host.style.width = r.width + 'px';
+      host.style.height = r.height + 'px';
+    };
+    window.addEventListener('resize', onResize);
+    m.addEventListener('scroll', onResize); // if the modal scrolls
+
+    // Initialize if needed
+    if(!player || !playerReady){
+      initPlayer().catch(err => toast('❌ YouTube speler fout: ' + err.message, '#e74c3c', 6000));
+    }
+    updateAllUI();
   }
 
   function exportPlaylist(){
@@ -31049,12 +31067,9 @@ const Radio = (function(){
     const data = { version: 1, exportedAt: Date.now(), tracks: tracks.slice() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'timothy-radio-playlist.json';
-    a.click();
+    const a = document.createElement('a'); a.href = url; a.download = 'timothy-radio-playlist.json'; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
-    toast(`📤 ${tracks.length} nummer${tracks.length === 1 ? '' : 's'} gedeeld als JSON`, '#5fd39a');
+    toast(`📤 ${tracks.length} nummers gedeeld`, '#5fd39a');
   }
 
   function importPlaylist(file){
@@ -31066,15 +31081,11 @@ const Radio = (function(){
           const arr = Array.isArray(data) ? data : (data.tracks || []);
           let added = 0;
           for(const t of arr){
-            if(t && t.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id)){
-              if(!tracks.some(x => x.id === t.id)){
-                tracks.push({ id: t.id, title: t.title || 'Nummer', addedAt: Date.now() });
-                added++;
-              }
+            if(t && t.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id) && !tracks.some(x => x.id === t.id)){
+              tracks.push({ id: t.id, title: t.title || 'Nummer', addedAt: Date.now() }); added++;
             }
           }
-          save();
-          resolve(added);
+          save(); resolve(added);
         } catch(err){ reject(err); }
       };
       r.onerror = () => reject(r.error || new Error('Kon bestand niet lezen'));
@@ -31086,7 +31097,6 @@ const Radio = (function(){
     const F = window.__timothyFocus;
     if(!F) return toast('Focus Mode niet beschikbaar', '#e74c3c');
     if(F.active) return toast('Focus Mode is al bezig', '#e74c3c');
-
     if(!F._radioPatched){
       F._radioPatched = true;
       const orig = F.startLofi;
@@ -31098,12 +31108,10 @@ const Radio = (function(){
     updateAllUI();
   }
 
-  /* ── Speler INITIEEL aanmaken (direct bij laden, niet pas bij open modal) ── */
   initPlayer().catch(err => console.warn('Radio init:', err));
 
   return {
-    open: openModal, close: closeModal,
-    toggle, next, prev,
+    open: openModal, close: closeModal, toggle, next, prev,
     isPlaying: () => isPlaying,
     currentTrack: () => currentIdx >= 0 ? tracks[currentIdx] : null,
     tracks: () => tracks.slice(),
