@@ -1,0 +1,22 @@
+{
+  "name": "Timothy",
+  "short_name": "Timothy",
+  "description": "Timothy — je AI-assistent en game-hub",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1621",
+  "theme_color": "#0e1621",
+  "lang": "nl",
+  "dir": "ltr",
+  "categories": ["education", "games", "productivity"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
