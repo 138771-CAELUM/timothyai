@@ -1,0 +1,113 @@
+(() => {
+  // ── Re-run guard: kill any previous AI instance before starting a new one ──
+  if (window.__ai && typeof window.__ai.stop === 'function') {
+    window.__ai.stop();
+    console.log('🧠 Previous AI stopped, restarting…');
+  }
+
+  const COLS = 10, ROWS = 20;
+  const AI_SHAPES = {
+    I: [[[1,1,1,1]], [[1],[1],[1],[1]]],
+    O: [[[1,1],[1,1]]],
+    T: [[[0,1,0],[1,1,1]], [[1,0],[1,1],[1,0]], [[1,1,1],[0,1,0]], [[0,1],[1,1],[0,1]]],
+    S: [[[0,1,1],[1,1,0]], [[1,0],[1,1],[0,1]]],
+    Z: [[[1,1,0],[0,1,1]], [[0,1],[1,1],[1,0]]],
+    J: [[[1,0,0],[1,1,1]], [[1,1],[1,0],[1,0]], [[1,1,1],[0,0,1]], [[0,1],[0,1],[1,1]]],
+    L: [[[0,0,1],[1,1,1]], [[1,0],[1,0],[1,1]], [[1,1,1],[1,0,0]], [[1,1],[0,1],[0,1]]]
+  };
+
+  // Score the post-clear board. `linesCleared` is added as a separate bonus.
+  function evaluate(board, linesCleared) {
+    let agg = 0, holes = 0, bump = 0;
+    const heights = new Array(COLS).fill(0);
+    for (let x = 0; x < COLS; x++)
+      for (let y = 0; y < ROWS; y++)
+        if (board[y][x]) { heights[x] = ROWS - y; agg += heights[x]; break; }
+    for (let x = 0; x < COLS; x++) {
+      let seen = false;
+      for (let y = 0; y < ROWS; y++) {
+        if (board[y][x]) seen = true;
+        else if (seen) holes++;
+      }
+    }
+    for (let x = 0; x < COLS - 1; x++) bump += Math.abs(heights[x] - heights[x + 1]);
+    return -0.510066 * agg + 0.760666 * linesCleared - 0.35663 * holes - 0.184483 * bump;
+  }
+
+  function simulateDrop(board, shape, col) {
+    const b = board.map(r => r.slice());
+    const sh = shape.length, sw = shape[0].length;
+    if (col < 0 || col + sw > COLS) return null;
+    let row = -sh;
+    while (true) {
+      let hit = false;
+      for (let sy = 0; sy < sh && !hit; sy++)
+        for (let sx = 0; sx < sw; sx++) {
+          if (!shape[sy][sx]) continue;
+          const by = row + 1 + sy, bx = col + sx;
+          if (by >= ROWS || (by >= 0 && b[by][bx])) { hit = true; break; }
+        }
+      if (hit) break;
+      row++;
+    }
+    if (row < 0) return null;
+    for (let sy = 0; sy < sh; sy++)
+      for (let sx = 0; sx < sw; sx++)
+        if (shape[sy][sx]) b[row + sy][col + sx] = 1;
+
+    // Clear completed rows before scoring
+    let linesCleared = 0;
+    for (let y = ROWS - 1; y >= 0; y--) {
+      if (b[y].every(c => c)) {
+        b.splice(y, 1);
+        b.unshift(new Array(COLS).fill(0));
+        linesCleared++;
+        y++;
+      }
+    }
+    return { board: b, linesCleared };
+  }
+
+  function findBestMove(board, type) {
+    const rotations = AI_SHAPES[type];
+    if (!rotations) return null;
+    let best = { score: -Infinity };
+    for (let r = 0; r < rotations.length; r++) {
+      const shape = rotations[r];
+      for (let col = 0; col <= COLS - shape[0].length; col++) {
+        const sim = simulateDrop(board, shape, col);
+        if (!sim) continue;
+        const s = evaluate(sim.board, sim.linesCleared);
+        if (s > best.score) best = { score: s, shape, col };
+      }
+    }
+    return best.score === -Infinity ? null : best;
+  }
+
+  // ── Main loop: place pieces directly via the game's bridge API ──
+  let interval = null;
+  function step() {
+    const g = window.game;
+    if (!g) return;                       // Tetris not mounted yet — wait
+    if (g.gameOver) {
+      if (interval) { clearInterval(interval); interval = null; }
+      console.log('🧠 AI stopped. Final score:', g.score, '| Lines:', g.lines);
+      return;
+    }
+    if (g.paused || !g.currentPiece) return;  // during line-clear animation, skip
+    const best = findBestMove(g.board, g.currentPiece.type);
+    if (!best) { g.hardDrop(); return; }
+    if (!g.placePieceAt(best.shape, best.col)) g.hardDrop();
+  }
+
+  interval = setInterval(step, 60);
+
+  window.__ai = {
+    stop: () => {
+      if (interval) { clearInterval(interval); interval = null; }
+      console.log('🧠 AI stopped.');
+    }
+  };
+
+  console.log('🧠 AI running. Stop with window.__ai.stop()');
+})();
